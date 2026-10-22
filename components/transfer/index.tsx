@@ -4,6 +4,7 @@ import List, { TransferListProps } from './list';
 import Operation from './operation';
 import Search from './search';
 import injectLocale from '../locale-provider/injectLocale';
+import { createKeySet, hasKey } from '../_util/keyMap';
 
 function noop() {
 }
@@ -79,11 +80,12 @@ abstract class Transfer extends React.Component<TransferProps, any> {
     super(props);
 
     const { selectedKeys = [], targetKeys = [] } = props;
+    const targetKeySet = createKeySet(targetKeys);
     this.state = {
       leftFilter: '',
       rightFilter: '',
-      sourceSelectedKeys: selectedKeys.filter(key => targetKeys.indexOf(key) === -1),
-      targetSelectedKeys: selectedKeys.filter(key => targetKeys.indexOf(key) > -1),
+      sourceSelectedKeys: selectedKeys.filter(key => !hasKey(targetKeySet, key)),
+      targetSelectedKeys: selectedKeys.filter(key => hasKey(targetKeySet, key)),
     };
   }
 
@@ -101,14 +103,18 @@ abstract class Transfer extends React.Component<TransferProps, any> {
         // clear key nolonger existed
         // clear checkedKeys according to targetKeys
         const { dataSource, targetKeys = [] } = nextProps;
+        const targetKeySet = createKeySet(targetKeys);
+        const sourceSelectedKeySet = createKeySet(sourceSelectedKeys);
+        const targetSelectedKeySet = createKeySet(targetSelectedKeys);
         const newSourceSelectedKeys: String[] = [];
         const newTargetSelectedKeys: String[] = [];
 
         dataSource.forEach(record => {
-          if (sourceSelectedKeys.includes(record.key) && !targetKeys.includes(record.key)) {
+          const inTarget = hasKey(targetKeySet, record.key);
+          if (hasKey(sourceSelectedKeySet, record.key) && !inTarget) {
             newSourceSelectedKeys.push(record.key);
           }
-          if (targetSelectedKeys.includes(record.key) && targetKeys.includes(record.key)) {
+          if (hasKey(targetSelectedKeySet, record.key) && inTarget) {
             newTargetSelectedKeys.push(record.key);
           }
         });
@@ -121,9 +127,10 @@ abstract class Transfer extends React.Component<TransferProps, any> {
 
     if (nextProps.selectedKeys) {
       const targetKeys = nextProps.targetKeys;
+      const targetKeySet = createKeySet(targetKeys);
       this.setState({
-        sourceSelectedKeys: nextProps.selectedKeys.filter(key => targetKeys.indexOf(key) === -1),
-        targetSelectedKeys: nextProps.selectedKeys.filter(key => targetKeys.indexOf(key) > -1),
+        sourceSelectedKeys: nextProps.selectedKeys.filter(key => !hasKey(targetKeySet, key)),
+        targetSelectedKeys: nextProps.selectedKeys.filter(key => hasKey(targetKeySet, key)),
       });
     }
   }
@@ -134,6 +141,7 @@ abstract class Transfer extends React.Component<TransferProps, any> {
     }
 
     const { rowKey, dataSource, targetKeys = [] } = props;
+    const targetKeySet = createKeySet(targetKeys);
 
     const leftDataSource: TransferItem[] = [];
     const rightDataSource: TransferItem[] = [];
@@ -142,7 +150,7 @@ abstract class Transfer extends React.Component<TransferProps, any> {
       if (rowKey) {
         record.key = rowKey(record);
       }
-      if (targetKeys.includes(record.key)) {
+      if (hasKey(targetKeySet, record.key)) {
         rightDataSource.push(record);
       } else {
         leftDataSource.push(record);
@@ -161,12 +169,16 @@ abstract class Transfer extends React.Component<TransferProps, any> {
     const { targetKeys = [], dataSource = [], onChange } = this.props;
     const { sourceSelectedKeys, targetSelectedKeys } = this.state;
     const moveKeys = direction === 'right' ? sourceSelectedKeys : targetSelectedKeys;
+    const disabledKeySet = createKeySet(
+      dataSource.filter(item => item.disabled).map(item => item.key),
+    );
     // filter the disabled options
-    const newMoveKeys = moveKeys.filter(key => !dataSource.some(data => !!(key === data.key && data.disabled)));
+    const newMoveKeys = moveKeys.filter(key => !hasKey(disabledKeySet, key));
+    const newMoveKeySet = createKeySet(newMoveKeys);
     // move items to target box
     const newTargetKeys = direction === 'right'
       ? newMoveKeys.concat(targetKeys)
-      : targetKeys.filter(targetKey => newMoveKeys.indexOf(targetKey) === -1);
+      : targetKeys.filter(targetKey => !hasKey(newMoveKeySet, targetKey));
 
     // empty checked keys
     const oppositeDirection = direction === 'right' ? 'left' : 'right';
@@ -200,11 +212,13 @@ abstract class Transfer extends React.Component<TransferProps, any> {
   handleSelectAll = (direction, filteredDataSource, checkAll) => {
     const originalSelectedKeys = this.state[this.getSelectedKeysName(direction)] || [];
     const currentKeys = filteredDataSource.map(item => item.key);
+    const currentKeySet = createKeySet(currentKeys);
+    const originalKeySet = createKeySet(originalSelectedKeys);
     // Only operate current keys from original selected keys
-    const newKeys1 = originalSelectedKeys.filter(key => currentKeys.indexOf(key) === -1);
+    const newKeys1 = originalSelectedKeys.filter(key => !hasKey(currentKeySet, key));
     const newKeys2 = [...originalSelectedKeys];
     currentKeys.forEach((key) => {
-      if (newKeys2.indexOf(key) === -1) {
+      if (!hasKey(originalKeySet, key)) {
         newKeys2.push(key);
       }
     });

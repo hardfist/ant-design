@@ -1,6 +1,7 @@
 import React from 'react';
 import Checkbox from '../checkbox';
 import Radio from '../radio';
+import { hasKey } from '../_util/keyMap';
 import { Store } from './createStore';
 
 export interface SelectionBoxProps {
@@ -43,12 +44,9 @@ export default class SelectionBox extends React.Component<SelectionBoxProps, any
 
   getCheckState(props) {
     const { store, defaultSelection, rowIndex } = props;
-    let checked = false;
-    if (store.getState().selectionDirty) {
-      checked = store.getState().selectedRowKeys.indexOf(rowIndex) >= 0;
-    } else {
-      checked = (store.getState().selectedRowKeys.indexOf(rowIndex) >= 0 ||
-                 defaultSelection.indexOf(rowIndex) >= 0);
+    let checked = hasKey(store.getSelectedKeySet(), rowIndex);
+    if (!checked && !store.getState().selectionDirty) {
+      checked = defaultSelection.indexOf(rowIndex) >= 0;
     }
     return checked;
   }
