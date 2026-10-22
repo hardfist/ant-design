@@ -1,5 +1,6 @@
 import React from 'react';
 import Checkbox from '../checkbox';
+import { hasKey } from '../_util/keyMap';
 import { Store } from './createStore';
 import Dropdown from '../dropdown';
 import Menu from '../menu';
@@ -71,15 +72,14 @@ export default class SelectionCheckboxAll extends React.Component<SelectionCheck
   checkSelection(data, type, byDefaultChecked) {
     const { store, getCheckboxPropsByItem, getRecordKey } = this.props;
     // type should be 'every' | 'some'
-    if (type === 'every' || type === 'some') {
-      return (
-        byDefaultChecked
-        ? data[type]((item, i) => getCheckboxPropsByItem(item, i).defaultChecked)
-        : data[type]((item, i) =>
-              store.getState().selectedRowKeys.indexOf(getRecordKey(item, i)) >= 0)
-      );
+    if (type !== 'every' && type !== 'some') {
+      return false;
     }
-    return false;
+    if (byDefaultChecked) {
+      return data[type]((item, i) => getCheckboxPropsByItem(item, i).defaultChecked);
+    }
+    const selectedKeySet = store.getSelectedKeySet();
+    return data[type]((item, i) => hasKey(selectedKeySet, getRecordKey(item, i)));
   }
 
   setCheckState(props) {

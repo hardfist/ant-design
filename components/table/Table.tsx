@@ -14,6 +14,8 @@ import SelectionCheckboxAll, { SelectionDecorator } from './SelectionCheckboxAll
 import Column, { ColumnProps } from './Column';
 import ColumnGroup from './ColumnGroup';
 import { flatArray, treeMap, flatFilter, normalizeColumns } from './util';
+import { createKeySet, hasKey } from '../_util/keyMap';
+import { updateSelectedKeys } from './rowSelection';
 
 function noop() {
 }
@@ -143,6 +145,17 @@ export default class Table<T> extends React.Component<TableProps<T>, any> {
   CheckboxPropsCache: Object;
   store: Store;
   columns: ColumnProps<T>[];
+  localDataCache: {
+    source: T[] | undefined;
+    filters: any;
+    sortOrder: any;
+    sortColumn: any;
+    columns: ColumnProps<T>[];
+    childrenColumnName: string;
+    data: T[];
+  } | null;
+  defaultSelectionReady: boolean;
+  defaultSelectionCache: string[];
 
   constructor(props) {
     super(props);
@@ -167,6 +180,9 @@ export default class Table<T> extends React.Component<TableProps<T>, any> {
       selectedRowKeys: (props.rowSelection || {}).selectedRowKeys || [],
       selectionDirty: false,
     });
+    this.localDataCache = null;
+    this.defaultSelectionReady = false;
+    this.defaultSelectionCache = [];
   }
 
   getCheckboxPropsByItem = (item, index) => {
@@ -183,13 +199,21 @@ export default class Table<T> extends React.Component<TableProps<T>, any> {
   }
 
   getDefaultSelection() {
-    const { rowSelection = {} } = this.props;
-    if (!rowSelection.getCheckboxProps) {
-      return [];
+    if (this.defaultSelectionReady) {
+      return this.defaultSelectionCache;
     }
-    return this.getFlatData()
-      .filter((item, rowIndex) => this.getCheckboxPropsByItem(item, rowIndex).defaultChecked)
-      .map((record, rowIndex) => this.getRecordKey(record, rowIndex));
+    const { rowSelection = {} } = this.props;
+    let keys: string[] = [];
+    if (rowSelection.getCheckboxProps) {
+      keys = this.getFlatData()
+        .filter((item, rowIndex) => this.getCheckboxPropsByItem(item, rowIndex).defaultChecked)
+        .map((record, rowIndex) => this.getRecordKey(record, rowIndex));
+    }
+    // Selection cells call this once per visible row. The result does not
+    // depend on the row, so reuse it until the next Table render.
+    this.defaultSelectionCache = keys;
+    this.defaultSelectionReady = true;
+    return keys;
   }
 
   getDefaultPagination(props) {
@@ -269,8 +293,9 @@ export default class Table<T> extends React.Component<TableProps<T>, any> {
     if (!rowSelection.onChange && !rowSelection[selectWay]) {
       return;
     }
+    const selectedKeySet = createKeySet(selectedRowKeys);
     const selectedRows = data.filter(
-      (row, i) => selectedRowKeys.indexOf(this.getRecordKey(row, i)) >= 0,
+      (row, i) => hasKey(selectedKeySet, this.getRecordKey(row, i)),
     );
     if (rowSelection.onChange) {
       rowSelection.onChange(selectedRowKeys, selectedRows);
@@ -278,8 +303,9 @@ export default class Table<T> extends React.Component<TableProps<T>, any> {
     if (selectWay === 'onSelect' && rowSelection.onSelect) {
       rowSelection.onSelect(record, checked, selectedRows);
     } else if (selectWay === 'onSelectAll' && rowSelection.onSelectAll) {
+      const changeKeySet = createKeySet(changeRowKeys);
       const changeRows = data.filter(
-        (row, i) => changeRowKeys.indexOf(this.getRecordKey(row, i)) >= 0,
+        (row, i) => hasKey(changeKeySet, this.getRecordKey(row, i)),
       );
       rowSelection.onSelectAll(checked, selectedRows, changeRows);
     } else if (selectWay === 'onSelectInvert' && rowSelection.onSelectInvert) {
@@ -485,50 +511,15 @@ export default class Table<T> extends React.Component<TableProps<T>, any> {
   handleSelectRow = (selectionKey, index, onSelectFunc) => {
     const data = this.getFlatCurrentPageData();
     const defaultSelection = this.store.getState().selectionDirty ? [] : this.getDefaultSelection();
-    const selectedRowKeys = this.store.getState().selectedRowKeys.concat(defaultSelection);
+    let selectedRowKeys = this.store.getState().selectedRowKeys.concat(defaultSelection);
     const changeableRowKeys = data
       .filter((item, i) => !this.getCheckboxPropsByItem(item, i).disabled)
       .map((item, i) => this.getRecordKey(item, i));
-
-    let changeRowKeys: string[] = [];
-    let selectWay = '';
-    let checked;
-    // handle default selection
-    switch (selectionKey) {
-      case 'all':
-        changeableRowKeys.forEach(key => {
-          if (selectedRowKeys.indexOf(key) < 0) {
-            selectedRowKeys.push(key);
-            changeRowKeys.push(key);
-          }
-        });
-        selectWay = 'onSelectAll';
-        checked = true;
-        break;
-      case 'removeAll':
-        changeableRowKeys.forEach(key => {
-          if (selectedRowKeys.indexOf(key) >= 0) {
-            selectedRowKeys.splice(selectedRowKeys.indexOf(key), 1);
-            changeRowKeys.push(key);
-          }
-        });
-        selectWay = 'onSelectAll';
-        checked = false;
-        break;
-      case 'invert':
-        changeableRowKeys.forEach(key => {
-          if (selectedRowKeys.indexOf(key) < 0) {
-            selectedRowKeys.push(key);
-          }else {
-            selectedRowKeys.splice(selectedRowKeys.indexOf(key), 1);
-          }
-          changeRowKeys.push(key);
-          selectWay = 'onSelectInvert';
-        });
-        break;
-      default:
-        break;
-    }
+    const nextSelection = updateSelectedKeys(selectedRowKeys, changeableRowKeys, selectionKey);
+    const changeRowKeys = nextSelection.changeRowKeys;
+    const selectWay = nextSelection.selectWay;
+    const checked = nextSelection.checked;
+    selectedRowKeys = nextSelection.selectedRowKeys;
 
     this.store.setState({
       selectionDirty: true,
@@ -803,36 +794,39 @@ export default class Table<T> extends React.Component<TableProps<T>, any> {
 
   findColumn(myKey) {
     let column;
-    treeMap(this.columns, c => {
-      if (this.getColumnKey(c) === myKey) {
-        column = c;
+    const loop = (columns) => {
+      for (let i = 0; i < columns.length; i++) {
+        const current = columns[i];
+        if (this.getColumnKey(current) === myKey) {
+          column = current;
+        }
+        if (current.children) {
+          loop(current.children);
+        }
       }
-    });
+    };
+    loop(this.columns || []);
     return column;
   }
 
   getCurrentPageData() {
     let data = this.getLocalData();
-    let current;
-    let pageSize;
-    let state = this.state;
-    // 如果没有分页的话，默认全部展示
+    // 如果没有分页的话，默认全部展示。
+    // pageSize 曾经被设成 Number.MAX_VALUE，再用 filter 把整表拷贝一遍。
     if (!this.hasPagination()) {
-      pageSize = Number.MAX_VALUE;
-      current = 1;
-    } else {
-      pageSize = state.pagination.pageSize;
-      current = this.getMaxCurrent(state.pagination.total || data.length);
+      return data.slice(0);
     }
+    const { pagination } = this.state;
+    const pageSize = pagination.pageSize;
+    const current = this.getMaxCurrent(pagination.total || data.length);
 
     // 分页
     // ---
     // 当数据量少于等于每页数量时，直接设置数据
     // 否则进行读取分页数据
-    if (data.length > pageSize || pageSize === Number.MAX_VALUE) {
-      data = data.filter((_, i) => {
-        return i >= (current - 1) * pageSize && i < current * pageSize;
-      });
+    if (data.length > pageSize) {
+      const start = (current - 1) * pageSize;
+      data = data.slice(start, start + pageSize);
     }
     return data;
   }
@@ -857,7 +851,17 @@ export default class Table<T> extends React.Component<TableProps<T>, any> {
 
   getLocalData() {
     const state = this.state;
-    const { dataSource } = this.props;
+    const { dataSource, childrenColumnName = 'children' } = this.props;
+    const cached = this.localDataCache;
+    if (cached &&
+        cached.source === dataSource &&
+        cached.filters === state.filters &&
+        cached.sortOrder === state.sortOrder &&
+        cached.sortColumn === state.sortColumn &&
+        cached.columns === this.columns &&
+        cached.childrenColumnName === childrenColumnName) {
+      return cached.data;
+    }
     let data = dataSource || [];
     // 优化本地排序
     data = data.slice(0);
@@ -882,10 +886,20 @@ export default class Table<T> extends React.Component<TableProps<T>, any> {
         }) : data;
       });
     }
+    this.localDataCache = {
+      source: dataSource,
+      filters: state.filters,
+      sortOrder: state.sortOrder,
+      sortColumn: state.sortColumn,
+      columns: this.columns,
+      childrenColumnName,
+      data,
+    };
     return data;
   }
 
   render() {
+    this.defaultSelectionReady = false;
     const { style, className, prefixCls, showHeader, ...restProps } = this.props;
     const data = this.getCurrentPageData();
     let columns = this.renderRowSelection();

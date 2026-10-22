@@ -9,6 +9,7 @@ import { TransferItem } from './index';
 import Search from './search';
 import Item from './item';
 import triggerEvent from '../_util/triggerEvent';
+import { createKeySet, hasKey } from '../_util/keyMap';
 
 function noop() {
 }
@@ -78,11 +79,11 @@ export default class TransferList extends React.Component<TransferListProps, any
     return PureRenderMixin.shouldComponentUpdate.apply(this, args);
   }
 
-  getCheckStatus(filteredDataSource) {
+  getCheckStatus(filteredDataSource, checkedKeySet) {
     const { checkedKeys } = this.props;
     if (checkedKeys.length === 0) {
       return 'none';
-    } else if (filteredDataSource.every(item => checkedKeys.indexOf(item.key) >= 0)) {
+    } else if (filteredDataSource.every(item => hasKey(checkedKeySet, item.key))) {
       return 'all';
     }
     return 'part';
@@ -148,6 +149,7 @@ export default class TransferList extends React.Component<TransferListProps, any
 
     const filteredDataSource: TransferItem[] = [];
     const totalDataSource: TransferItem[] = [];
+    const checkedKeySet = createKeySet(checkedKeys);
 
     const showItems = dataSource.map((item) => {
       const { renderedText, renderedEl } = this.renderItem(item);
@@ -162,7 +164,7 @@ export default class TransferList extends React.Component<TransferListProps, any
         filteredDataSource.push(item);
       }
 
-      const checked = checkedKeys.indexOf(item.key) >= 0;
+      const checked = hasKey(checkedKeySet, item.key);
       return (
         <Item
           key={item.key}
@@ -215,7 +217,7 @@ export default class TransferList extends React.Component<TransferListProps, any
       </div>
     ) : null;
 
-    const checkStatus = this.getCheckStatus(filteredDataSource);
+    const checkStatus = this.getCheckStatus(filteredDataSource, checkedKeySet);
     const checkedAll = checkStatus === 'all';
     const checkAllCheckbox = (
       <Checkbox
